@@ -61,7 +61,7 @@ def run_agent(request: TaskRequest):
             "current_agent": "supervisor",
             "final_output": "",
         }
-        result = agent_graph.run(initial_state)
+        result = agent_graph.invoke(initial_state)
         return TaskResponse(
             agent_used=result.get("current_agent", "supervisor"),
             task_type=result.get("task_type", "research"),

@@ -3,7 +3,6 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_anthropic import ChatAnthropic
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
 import os
 from dotenv import load_dotenv
 
@@ -19,9 +18,6 @@ search_tool = TavilySearchResults(
     max_results=3,
     tavily_api_key=os.getenv("TAVILY_API_KEY"),
 )
-
-tools = [search_tool]
-llm_with_tools = llm.bind_tools(tools)
 
 
 class AgentState(TypedDict):
@@ -52,14 +48,14 @@ def research_agent_node(state: AgentState) -> AgentState:
     prompt = messages[-1].content if messages else ""
     system_prompt = (
         "You are an expert research agent. Your job is to:\n"
-        "1. Search the web for accurate, up-to-date information\n"
+        "1. Use the web search results below as your main source\n"
         "2. Synthesize findings into clear, cited responses\n"
-        "3. Always mention your sources\n"
-        "Use the search tool when needed before answering."
+        "3. Always mention your sources"
     )
+    results = search_tool.invoke(prompt)
 
-    response = llm_with_tools.invoke(
-        [HumanMessage(content=system_prompt + "\n\nTask: " + prompt)]
+    response = llm.invoke(
+        [HumanMessage(content=f"{system_prompt}\n\nSearch results:\n{results}\n\nTask: {prompt}")]
     )
     return {
         **state,
@@ -122,11 +118,6 @@ def route_after_supervisor(state: AgentState) -> str:
     return "research_agent"
 
 
-def should_use_tools(state: AgentState) -> str:
-    """Decide if the research agent should use tools."""
-    return END
-
-
 def build_agent_graph():
     workflow = StateGraph(AgentState)
 
@@ -134,25 +125,12 @@ def build_agent_graph():
     workflow.add_node("research_agent", research_agent_node)
     workflow.add_node("summarizer", summarizer_agent_node)
     workflow.add_node("code_agent", code_agent_node)
-    workflow.add_node("tools", ToolNode(tools))
 
     workflow.set_entry_point("supervisor")
 
-    workflow.add_conditional_edges(
-        "supervisor",
-        {
-            "research_agent": route_after_supervisor,
-            "summarizer": route_after_supervisor,
-            "code_agent": route_after_supervisor,
-        },
-    )
+    workflow.add_conditional_edges("supervisor", route_after_supervisor)
 
-    workflow.add_conditional_edges(
-        "research_agent",
-        {"tools": should_use_tools, END: END},
-    )
-
-    workflow.add_edge("tools", "research_agent")
+    workflow.add_edge("research_agent", END)
     workflow.add_edge("summarizer", END)
     workflow.add_edge("code_agent", END)
 
