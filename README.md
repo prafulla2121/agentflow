@@ -1,196 +1,86 @@
-# ⚡ AgentFlow – Multi-Agent AI Automation Platform
+# AgentFlow
 
-> A production-grade multi-agent orchestration system built with LangGraph, Claude API, and FastAPI. Specialized agents for research, summarization, and code generation — all coordinated by an intelligent supervisor.
+**A small LangGraph multi-agent prototype.** A supervisor node sends each task to one of three specialist agents (research, summarize, code), and a FastAPI app exposes the graph as a REST API.
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://python.org)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.0.55-green)](https://langchain.com/langgraph)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-teal)](https://fastapi.tiangolo.com)
-[![Claude](https://img.shields.io/badge/Claude-Anthropic-orange)](https://anthropic.com)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://docker.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+> Status: learning prototype. Two Python files, no tests, not deployed.
 
----
+## How it works
 
-## 📌 Overview
-
-AgentFlow is a **multi-agent AI automation platform** that orchestrates specialized AI agents using **LangGraph**'s stateful graph architecture. A supervisor agent intelligently routes incoming tasks to the most appropriate specialist:
-
-- 🔍 **Research Agent** — Web search via Tavily + synthesis
-- 📝 **Summarizer Agent** — Structured summaries from long content
-- 💻 **Code Agent** — Production-ready Python code generation
-
-All exposed via a **FastAPI REST interface** with **Server-Sent Events (SSE)** for real-time streaming.
-
----
-
-## ✨ Features
-
-- 🤖 **Multi-Agent Orchestration** — LangGraph stateful graphs with conditional branching
-- 🎯 **Intelligent Routing** — Supervisor node automatically routes to the right agent
-- 🔍 **Tool Use** — Research agent has web search (Tavily) tool access
-- 🌊 **Streaming** — Real-time SSE streaming of agent responses
-- 🔄 **Human-in-the-Loop Ready** — Architecture supports checkpoint interrupts
-- 🚀 **FastAPI REST** — Clean REST interface with auto Swagger docs
-- 🐳 **Docker Ready** — Production containerized deployment
-
----
-
-## 🏗️ Architecture
-
-```
-User Request
-     │
-     ▼
-┌─────────────┐
-│  SUPERVISOR  │  ← Analyzes task type
-│    NODE      │
-└──────┬───────┘
-       │ Conditional Routing
-       ▼                    ▼                    ▼
-┌──────────┐    ┌────────────┐    ┌──────────────┐
-│ RESEARCH │    │ SUMMARIZER │    │ CODE AGENT   │
-│  AGENT   │    │   AGENT    │    │              │
-└────┬─────┘    └─────┬──────┘    └──────┬───────┘
-     │                │                  │
-     ▼                ▼                  ▼
-┌─────────┐         [END]              [END]
-│  TOOLS  │
-│  NODE   │
-└────┬────┘
-     │
-    [END]
+```mermaid
+flowchart LR
+    T[POST /run<br/>task] --> S{supervisor<br/>keyword routing}
+    S -- code / function / script / python --> C[code_agent]
+    S -- summarize / summary / brief / tldr --> SU[summarizer]
+    S -- anything else --> R[research_agent]
+    R --> W[Tavily web search<br/>top 3 results]
+    W --> R
+    C --> E((END))
+    SU --> E
+    R --> E
 ```
 
----
+- **supervisor** — picks the agent with simple keyword rules (no LLM call).
+- **research_agent** — runs a Tavily search, then asks Claude to answer from the results and cite sources.
+- **summarizer** — asks Claude for a bullet-point summary.
+- **code_agent** — asks Claude for Python code with docstrings and type hints.
 
-## 🛠️ Tech Stack
+All agents use Claude 3 Haiku through `langchain-anthropic`. State is a `TypedDict` (messages, task type, current agent, final output).
 
-| Component | Technology |
-|-----------|-----------|
-| Agent Orchestration | LangGraph |
-| LLM | Claude 3 Haiku (Anthropic) |
-| Web Search Tool | Tavily API |
-| REST API | FastAPI |
-| Streaming | Server-Sent Events (SSE) |
-| Deployment | Docker + GCP Cloud Run |
+## Run it
 
----
+Needs Python 3.11+, an Anthropic API key and a Tavily API key.
 
-## 🚀 Quick Start
-
-### 1. Clone the repository
 ```bash
 git clone https://github.com/prafulla2121/agentflow.git
 cd agentflow
-```
-
-### 2. Create virtual environment
-```bash
 python -m venv venv
-source venv/bin/activate    # Windows: venv\Scripts\activate
-```
-
-### 3. Install dependencies
-```bash
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
 
-### 4. Add API Keys
-```bash
-cp .env.example .env
-# Edit .env and add your keys
-```
-
-### 5. Run the API
-```bash
+cp .env.example .env            # add ANTHROPIC_API_KEY and TAVILY_API_KEY
 uvicorn main:app --reload --port 8000
 ```
 
-Open `http://localhost:8000/docs` for interactive Swagger UI.
+Swagger UI: http://localhost:8000/docs
 
----
-
-## 📡 API Usage
-
-### Run a task (auto-routed to best agent)
-```bash
-curl -X POST "http://localhost:8000/run" \
-  -H "Content-Type: application/json" \
-  -d '{"task": "Research the latest developments in LangGraph 2025"}'
-```
-
-### Stream response via SSE
-```bash
-curl -X POST "http://localhost:8000/run/stream" \
-  -H "Content-Type: application/json" \
-  -d '{"task": "Write a Python function to sort a list using quicksort"}'
-```
-
-### List available agents
-```bash
-curl http://localhost:8000/agents
-```
-
----
-
-## 🐳 Docker
+Or with Docker:
 
 ```bash
 docker build -t agentflow .
 docker run -p 8000:8000 --env-file .env agentflow
 ```
 
----
+## API
 
-## ☁️ GCP Cloud Run Deployment
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/run` | Body `{"task": "..."}`. Returns `agent_used`, `task_type`, `output`, `status`. |
+| `POST` | `/run/stream` | Same work, returned as one Server-Sent Event (the answer is not streamed token by token). |
+| `GET` | `/agents` | Lists the agents. |
+| `GET` | `/health` | Health check. |
 
 ```bash
-# Build and push
-gcloud builds submit --tag gcr.io/YOUR_PROJECT/agentflow
-
-# Deploy
-gcloud run deploy agentflow \
-  --image gcr.io/YOUR_PROJECT/agentflow \
-  --platform managed \
-  --region YOUR_REGION \
-  --allow-unauthenticated \
-  --set-env-vars ANTHROPIC_API_KEY=your_key,OPENAI_API_KEY=your_key,TAVILY_API_KEY=your_key
+curl -X POST http://localhost:8000/run \
+  -H "Content-Type: application/json" \
+  -d '{"task": "Write a Python function that checks if a string is a palindrome"}'
 ```
 
----
-
-## 📁 Project Structure
+## Files
 
 ```
-agentflow/
-├── agents.py           # LangGraph multi-agent graph definition
-├── main.py             # FastAPI app + SSE streaming endpoints
-├── requirements.txt    # Dependencies
-├── Dockerfile          # Container config
-├── .env.example        # Environment template
-├── .gitignore
-└── README.md
+agents.py         LangGraph state, agent nodes and graph
+main.py           FastAPI app
+requirements.txt  pinned dependencies
+Dockerfile        python:3.11-slim image running uvicorn
 ```
 
----
+## Next steps
 
-## 🔮 Roadmap
+- LLM-based routing instead of keywords
+- Real token streaming
+- Let the research agent decide when to search (tool calling loop)
+- Tests
 
-- [ ] Human-in-the-loop checkpoint interrupts
-- [ ] Persistent memory across sessions (Redis)
-- [ ] Additional agents: Data Analyst, Email Writer
-- [ ] LangSmith observability integration
-- [ ] React frontend dashboard
+## License
 
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) file.
-
----
-
-## 👤 Author
-
-**Prafulla Purohit**  
-🔗 [LinkedIn](https://linkedin.com/in/prafulla-purohit) | [GitHub](https://github.com/prafulla2121)
+MIT — see [LICENSE](LICENSE).
